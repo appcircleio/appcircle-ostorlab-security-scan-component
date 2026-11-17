@@ -675,28 +675,16 @@ RSpec.describe '#get_artifact_path' do
     expect(get_artifact_path).to eq(ipa)
   end
 
-  it 'prefers the signed APK over the unsigned one' do
-    ENV['AC_APK_PATH'] = touch_artifact(@dir, 'app-unsigned.apk')
+  it 'ignores the build variables when the input is empty' do
     ENV['AC_SIGNED_APK_PATH'] = touch_artifact(@dir, 'app-signed.apk')
-    expect(get_artifact_path).to eq(ENV['AC_SIGNED_APK_PATH'])
+    ENV['AC_EXPORT_DIR'] = @dir
+    expect(capture_abort { get_artifact_path }).to include('The artifact path is missing')
   end
 
-  it 'uses the unsigned APK when no signed one exists' do
-    ENV['AC_SIGNED_APK_PATH'] = File.join(@dir, 'missing.apk')
-    ENV['AC_APK_PATH'] = touch_artifact(@dir, 'app.apk')
-    expect(get_artifact_path).to eq(ENV['AC_APK_PATH'])
-  end
-
-  it 'uses the signed AAB' do
-    ENV['AC_SIGNED_AAB_PATH'] = touch_artifact(@dir, 'app.aab')
-    expect(get_artifact_path).to eq(ENV['AC_SIGNED_AAB_PATH'])
-  end
-
-  it 'finds the IPA under AC_EXPORT_DIR' do
-    export = File.join(@dir, 'export')
-    ipa = touch_artifact(export, 'App.ipa')
-    ENV['AC_EXPORT_DIR'] = export
-    expect(get_artifact_path).to eq(ipa)
+  it 'aborts on an unresolved variable reference' do
+    ENV['AC_OSTORLAB_ARTIFACT_PATH'] = '$AC_SIGNED_APK_PATH'
+    expect(capture_abort { get_artifact_path }).to include('`$AC_SIGNED_APK_PATH` did not resolve',
+                                                          'exports AC_SIGNED_APK_PATH')
   end
 
   it 'aborts when the input points at a missing file' do
@@ -714,16 +702,12 @@ RSpec.describe '#get_artifact_path' do
     expect(capture_abort { get_artifact_path }).to include('No APK, AAB or IPA found')
   end
 
-  it 'aborts when nothing can be found' do
-    ENV['AC_EXPORT_DIR'] = @dir
-    expect(capture_abort { get_artifact_path }).to include('No artifact to scan')
-  end
-end
-
-RSpec.describe '#pick_single_artifact' do
-  it 'warns and picks the first when several are found' do
-    out = capture_stdout { expect(pick_single_artifact(['/a/x.apk', '/a/y.ipa'], '/a')).to eq('/a/x.apk') }
-    expect(out).to include('@@[warning] 2 artifacts found in /a')
+  it 'aborts on a folder with several artifacts' do
+    touch_artifact(@dir, 'app-unsigned.apk')
+    touch_artifact(@dir, 'app-signed.apk')
+    ENV['AC_OSTORLAB_ARTIFACT_PATH'] = @dir
+    expect(capture_abort { get_artifact_path }).to include('2 artifacts found', 'app-signed.apk, app-unsigned.apk',
+                                                          'Set the Artifact Path input')
   end
 end
 
@@ -1055,7 +1039,7 @@ end
 RSpec.describe 'main.rb end to end' do
   context 'positive path – scan created without waiting' do
     it 'installs the CLI, starts the scan and exports the scan ID' do
-      run_main({ 'AC_APK_PATH' => apk_in }) do |result|
+      run_main({ 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in }) do |result|
         expect(result[:success]).to be(true), log_of(result)
         expect(result[:pip_args]).to eq(['install', '--quiet', '--upgrade', 'pip', 'ostorlab'])
         expect(result[:ostorlab_args]).to eq([
@@ -1070,7 +1054,7 @@ RSpec.describe 'main.rb end to end' do
     end
 
     it 'never prints the API key or the test password' do
-      env = { 'AC_APK_PATH' => apk_in,
+      env = { 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in,
               'AC_OSTORLAB_TEST_CREDENTIALS_LOGIN' => 'qa',
               'AC_OSTORLAB_TEST_CREDENTIALS_PASSWORD' => 'hunter2' }
       run_main(env) do |result|
@@ -1082,7 +1066,7 @@ RSpec.describe 'main.rb end to end' do
     end
 
     it 'reads the key from OSTORLAB_API_KEY when the input is unresolved' do
-      env = { 'AC_APK_PATH' => apk_in, 'AC_OSTORLAB_API_KEY' => '$OSTORLAB_API_KEY', 'OSTORLAB_API_KEY' => 'group-key' }
+      env = { 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in, 'AC_OSTORLAB_API_KEY' => '$OSTORLAB_API_KEY', 'OSTORLAB_API_KEY' => 'group-key' }
       run_main(env) do |result|
         expect(result[:success]).to be(true), log_of(result)
         expect(result[:ostorlab_args].first).to eq('--api-key=group-key')
@@ -1093,7 +1077,7 @@ RSpec.describe 'main.rb end to end' do
   context 'positive path – waits and the risk rating is acceptable' do
     it 'passes the wait options, a pinned CLI and an IPA from the export folder' do
       env = {
-        'AC_EXPORT_DIR' => ->(ws) { File.dirname(touch_artifact(File.join(ws, 'export'), 'App.ipa')) },
+        'AC_OSTORLAB_ARTIFACT_PATH' => ->(ws) { File.dirname(touch_artifact(File.join(ws, 'export'), 'App.ipa')) },
         'AC_OSTORLAB_BREAK_ON_RISK_RATING' => 'high',
         'AC_OSTORLAB_MAX_WAIT_MINUTES' => '45',
         'AC_OSTORLAB_SCAN_PROFILE' => 'full_scan',
@@ -1114,7 +1098,7 @@ RSpec.describe 'main.rb end to end' do
 
   context 'negative path – the risk rating breaks the pipeline' do
     it 'fails after exporting the scan ID and the risk rating' do
-      env = { 'AC_SIGNED_AAB_PATH' => apk_in('app-release.aab'), 'AC_OSTORLAB_BREAK_ON_RISK_RATING' => 'high' }
+      env = { 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in('app-release.aab'), 'AC_OSTORLAB_BREAK_ON_RISK_RATING' => 'high' }
       run_main(env, { scan_output: SCAN_BREACH, scan_exit: 2 }) do |result|
         expect(result[:success]).to be(false)
         expect(result[:ostorlab_args]).to include('android-aab')
@@ -1128,7 +1112,7 @@ RSpec.describe 'main.rb end to end' do
 
   context 'negative path – the scan does not finish in time' do
     it 'fails and names the wait time' do
-      env = { 'AC_APK_PATH' => apk_in, 'AC_OSTORLAB_BREAK_ON_RISK_RATING' => 'medium' }
+      env = { 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in, 'AC_OSTORLAB_BREAK_ON_RISK_RATING' => 'medium' }
       run_main(env, { scan_output: SCAN_STILL_RUNNING, scan_exit: 2 }) do |result|
         expect(result[:success]).to be(false)
         expect(result[:stderr]).to include('did not finish within 30 minutes')
@@ -1139,7 +1123,7 @@ RSpec.describe 'main.rb end to end' do
 
   context 'negative path – the scan cannot be started' do
     it 'explains a subscription problem' do
-      run_main({ 'AC_APK_PATH' => apk_in }, { scan_output: SCAN_SUBSCRIPTION, scan_exit: 2 }) do |result|
+      run_main({ 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in }, { scan_output: SCAN_SUBSCRIPTION, scan_exit: 2 }) do |result|
         expect(result[:success]).to be(false)
         expect(result[:stderr]).to include('subscription does not cover')
       end
@@ -1148,7 +1132,7 @@ RSpec.describe 'main.rb end to end' do
 
   context 'negative path – installation' do
     it 'explains a Python that is too old for the CLI' do
-      run_main({ 'AC_APK_PATH' => apk_in }, { pip_output: PIP_PYTHON_TOO_OLD, pip_exit: 1 }) do |result|
+      run_main({ 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in }, { pip_output: PIP_PYTHON_TOO_OLD, pip_exit: 1 }) do |result|
         expect(result[:success]).to be(false)
         expect(result[:stderr]).to include('needs Python 3.13 or later')
         expect(result[:ostorlab_args]).to be_nil
@@ -1156,14 +1140,14 @@ RSpec.describe 'main.rb end to end' do
     end
 
     it 'fails when pip leaves no ostorlab executable' do
-      run_main({ 'AC_APK_PATH' => apk_in }, { install_cli: false }) do |result|
+      run_main({ 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in }, { install_cli: false }) do |result|
         expect(result[:success]).to be(false)
         expect(result[:stderr]).to include('was installed but')
       end
     end
 
     it 'fails on a Python Path input that is too old' do
-      run_main({ 'AC_APK_PATH' => apk_in }, { python_version: '3.12.4' }) do |result|
+      run_main({ 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in }, { python_version: '3.12.4' }) do |result|
         expect(result[:success]).to be(false)
         expect(result[:stderr]).to include('is 3.12.4, the Ostorlab CLI needs 3.13 or later')
       end
@@ -1172,17 +1156,18 @@ RSpec.describe 'main.rb end to end' do
 
   context 'negative path – inputs' do
     it 'fails without an API key' do
-      run_main({ 'AC_APK_PATH' => apk_in, 'AC_OSTORLAB_API_KEY' => nil }) do |result|
+      run_main({ 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in, 'AC_OSTORLAB_API_KEY' => nil }) do |result|
         expect(result[:success]).to be(false)
         expect(result[:stderr]).to include('The Ostorlab API key is missing')
         expect(result[:pip_args]).to be_nil
       end
     end
 
-    it 'fails without an artifact' do
-      run_main({}) do |result|
+    it 'fails without an artifact path, even when a build produced one' do
+      run_main({ 'AC_SIGNED_APK_PATH' => apk_in }) do |result|
         expect(result[:success]).to be(false)
-        expect(result[:stderr]).to include('No artifact to scan')
+        expect(result[:stderr]).to include('The artifact path is missing')
+        expect(result[:pip_args]).to be_nil
       end
     end
   end
@@ -1191,21 +1176,21 @@ end
 # ─── 12. ENV validation ───────────────────────────────────────────────────────
 RSpec.describe 'ENV validation' do
   it 'fails without AC_STEP_TEMP and AC_TEMP_DIR' do
-    run_main({ 'AC_APK_PATH' => apk_in, 'AC_STEP_TEMP' => nil, 'AC_TEMP_DIR' => nil }) do |result|
+    run_main({ 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in, 'AC_STEP_TEMP' => nil, 'AC_TEMP_DIR' => nil }) do |result|
       expect(result[:success]).to be(false)
       expect(result[:stderr]).to include('Missing AC_STEP_TEMP or AC_TEMP_DIR')
     end
   end
 
   it 'falls back to AC_TEMP_DIR for the venv' do
-    run_main({ 'AC_APK_PATH' => apk_in, 'AC_STEP_TEMP' => nil }) do |result|
+    run_main({ 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in, 'AC_STEP_TEMP' => nil }) do |result|
       expect(result[:success]).to be(true), log_of(result)
       expect(result[:stdout]).to include('appcircle_ostorlab_security_scan/ostorlab-venv')
     end
   end
 
   it 'still succeeds without AC_ENV_FILE_PATH, with a warning' do
-    run_main({ 'AC_APK_PATH' => apk_in, 'AC_ENV_FILE_PATH' => nil }) do |result|
+    run_main({ 'AC_OSTORLAB_ARTIFACT_PATH' => apk_in, 'AC_ENV_FILE_PATH' => nil }) do |result|
       expect(result[:success]).to be(true), log_of(result)
       expect(result[:stdout]).to include('AC_ENV_FILE_PATH is not set')
     end

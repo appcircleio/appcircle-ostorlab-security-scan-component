@@ -9,7 +9,7 @@ The step follows Ostorlab's
 guide: it installs the Ostorlab CLI in a Python virtual environment in the step's temporary folder
 and runs `ostorlab ci-scan run`.
 
-It scans whatever the build produced, so it works on Java / Kotlin, Objective-C / Swift,
+It scans the artifact you point it to, so it works on Java / Kotlin, Objective-C / Swift,
 React Native and Flutter projects alike. Run it after the step that signs the application, for
 example **Android Sign** or **Xcodebuild for Devices**.
 
@@ -37,16 +37,19 @@ The **Ostorlab API Key** input defaults to `$OSTORLAB_API_KEY`, so nothing else 
 
 - `AC_OSTORLAB_API_KEY`: Ostorlab API Key. Defaults to `$OSTORLAB_API_KEY`. When the reference
   is left unresolved, the step reads `OSTORLAB_API_KEY` directly.
+- `AC_OSTORLAB_ARTIFACT_PATH`: Artifact Path. The APK, AAB or IPA to scan, or the folder holding
+  it. The step never picks an artifact on its own:
+  - Android: `$AC_SIGNED_APK_PATH` or `$AC_SIGNED_AAB_PATH` from **Android Sign**.
+  - iOS: `$AC_EXPORT_DIR` from **Xcodebuild for Devices**. iOS exposes no IPA path variable,
+    which is why a folder is accepted.
+
+  A folder must hold exactly one APK, AAB or IPA, otherwise the step fails and lists what it
+  found. The asset type (`android-apk`, `android-aab`, `ios-ipa`) follows from the extension.
 - `AC_OSTORLAB_SCAN_PROFILE`: Scan Profile. `fast_scan` (default) runs static analysis only,
   `full_scan` runs static, dynamic and backend analysis.
 
 ## Optional Input Variables
 
-- `AC_OSTORLAB_ARTIFACT_PATH`: Artifact Path. The APK, AAB or IPA, or the folder holding it. When
-  empty the step tries `AC_SIGNED_APK_PATH`, `AC_APK_PATH`, `AC_SIGNED_AAB_PATH`, `AC_AAB_PATH`,
-  then the `.ipa` under `AC_EXPORT_DIR` and `AC_OUTPUT_DIR`. iOS exposes no IPA path variable,
-  which is why a folder is accepted. The asset type (`android-apk`, `android-aab`, `ios-ipa`)
-  follows from the extension.
 - `AC_OSTORLAB_SCAN_TITLE`: Scan Title shown in Ostorlab. Defaults to `Appcircle scan`.
 - `AC_OSTORLAB_BREAK_ON_RISK_RATING`: Break On Risk Rating. `none` (default), `high`, `medium`,
   `low`, `potentially` or `hardening`. When set, the step waits for the scan and breaks the
@@ -102,6 +105,8 @@ The API key and the test password are masked in the log. The log closes with a s
 
 | Message | What to check |
 | --- | --- |
+| The Artifact Path input `$AC_SIGNED_APK_PATH` did not resolve | Run the step after the step that exports the variable, or set the full path. |
+| N artifacts found in the folder | Set Artifact Path to the file to scan. |
 | Your Ostorlab subscription does not cover this application or scan profile | Contact your Ostorlab account manager. |
 | The Ostorlab CLI needs Python 3.13 or later | Install a newer Python on the runner, or set Python Path to its full path. |
 | The Ostorlab CLI could not be installed | Check that the runner can reach `pypi.org`. |
