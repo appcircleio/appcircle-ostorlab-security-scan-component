@@ -47,9 +47,6 @@ PYTHON_TOO_OLD_PATTERN = /Requires-Python|No matching distribution found for ost
 ASSET_TYPES = {".apk" => "android-apk", ".aab" => "android-aab", ".ipa" => "ios-ipa"}
 SUPPORTED_ARTIFACTS = ASSET_TYPES.keys
 
-ARTIFACT_PATH_VARIABLES = ["AC_SIGNED_APK_PATH", "AC_APK_PATH", "AC_SIGNED_AAB_PATH", "AC_AAB_PATH"]
-ARTIFACT_DIR_VARIABLES = ["AC_EXPORT_DIR", "AC_OUTPUT_DIR"]
-
 ###### Enviroment Variable Check
 def env_has_key(key)
   return (ENV[key] != nil && ENV[key] != "") ? ENV[key] : abort("Missing #{key}.")
@@ -313,38 +310,29 @@ def get_cli_version()
 end
 
 ###### Artifact Resolution
+# The step scans only the artifact the user names, never one it guesses, so a
+# security gate cannot pass on the wrong binary.
 def get_artifact_path()
-  configured = env_default("AC_OSTORLAB_ARTIFACT_PATH", nil)
-  return resolve_artifact(configured, "the artifact path input") if configured != nil
-
-  ARTIFACT_PATH_VARIABLES.each do |key|
-    value = env_default(key, nil)
-    next if value == nil || !File.file?(value)
-
-    puts "Using the artifact from #{key}"
-    return resolve_artifact(value, key)
+  path = env_default("AC_OSTORLAB_ARTIFACT_PATH", nil)
+  if path == nil
+    abort_script("The artifact path is missing. Set the Artifact Path input to the APK, AAB or IPA to scan, " \
+                 "for example `$AC_SIGNED_APK_PATH`, or to the folder holding it, for example `$AC_EXPORT_DIR`.")
   end
 
-  ARTIFACT_DIR_VARIABLES.each do |key|
-    value = env_default(key, nil)
-    next if value == nil || !File.directory?(value)
-
-    found = find_artifacts(value)
-    next if found.empty?
-
-    puts "Found the artifact under #{key}"
-    return pick_single_artifact(found, value)
+  # An unresolved reference such as `$AC_SIGNED_APK_PATH` reaches the step as the
+  # literal text when no earlier step exported that variable.
+  if path.start_with?("$")
+    abort_script("The Artifact Path input `#{path}` did not resolve. Run this step after the step that " \
+                 "exports #{path.delete_prefix("$")}, or set the input to the artifact's full path.")
   end
 
-  abort_script("No artifact to scan. Set the artifact path input, or run this step after the build and " \
-               "sign steps so that #{ARTIFACT_PATH_VARIABLES.join(", ")} or an .ipa under " \
-               "#{ARTIFACT_DIR_VARIABLES.join(" / ")} is available.")
+  return resolve_artifact(path)
 end
 
-def resolve_artifact(path, origin)
+def resolve_artifact(path)
   expanded = File.expand_path(path)
   unless File.exist?(expanded)
-    abort_script("The artifact from #{origin} does not exist: #{expanded}")
+    abort_script("The artifact does not exist: #{expanded}")
   end
 
   return pick_single_artifact(find_artifacts(expanded), expanded) if File.directory?(expanded)
@@ -368,8 +356,8 @@ def pick_single_artifact(found, directory)
   end
 
   if found.length > 1
-    puts "@@[warning] #{found.length} artifacts found in #{directory}, scanning the first one. " \
-         "Set the artifact path input to choose: #{found.map { |f| File.basename(f) }.join(", ")}"
+    abort_script("#{found.length} artifacts found in #{directory}: " \
+                 "#{found.map { |f| File.basename(f) }.join(", ")}. Set the Artifact Path input to the one to scan.")
   end
 
   return found[0]
